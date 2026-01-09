@@ -13,7 +13,9 @@ const ModelArchive = db.define(
         notEmpty: true,
       },
     },
-
+    no_archive:{
+      type: DataTypes.STRING,
+    },
     application_number: {
       type: DataTypes.STRING,
     },
@@ -54,7 +56,8 @@ const ModelArchive = db.define(
     passport_type: {
       type: DataTypes.ENUM(
         "paspor biasa elektronik laminasi 5 tahun",
-        "paspor biasa elektronik laminasi 10 tahun"
+        "paspor biasa elektronik laminasi 10 tahun",
+        "PASPOR BIASA 24 H"
       ),
     },
 

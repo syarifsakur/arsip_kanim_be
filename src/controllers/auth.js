@@ -20,7 +20,7 @@ export const register = async (req, res) => {
   }
 };
 
-export const Login = async (req, res) => {
+export const  Login = async (req, res) => {
   const { username, password } = req.body;
 
   try {

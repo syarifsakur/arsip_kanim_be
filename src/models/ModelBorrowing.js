@@ -1,4 +1,4 @@
-import { DataTypes } from "sequelize";
+import { DataTypes, ENUM } from "sequelize";
 import db from "../configs/database.js";
 import ModelArchive from "./ModelArchive.js";
 
@@ -39,6 +39,10 @@ const ModelBorrowing = db.define(
     return_date: {
       type: DataTypes.DATEONLY,
     },
+
+    status:{
+      type:ENUM('dipinjam','dikembalikan'),
+    }
   },
   {
     freezeTableName: true,

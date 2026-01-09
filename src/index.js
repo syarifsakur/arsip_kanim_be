@@ -12,7 +12,7 @@ import RouteAuth from "./routers/RouteAuth.js";
 import RouteArchive from "./routers/RouteArchive.js";
 import RouteBorrowing from "./routers/RouteBorrowing.js";
 
-import createModel from "./models/ModelArchive.js";
+import createModel from "./models/ModelBorrowing.js";
 import { Login } from "./controllers/auth.js";
 
 const app = express();

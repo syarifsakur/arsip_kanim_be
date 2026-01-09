@@ -32,6 +32,7 @@ export const getBorrowings = async (req, res) => {
           "division",
           "loan_date",
           "return_date",
+          "status",
         ],
         order: [["createdAt", "DESC"]],
       });
@@ -39,6 +40,18 @@ export const getBorrowings = async (req, res) => {
     return res.status(200).json({ data: response, total: total });
   } catch (error) {
     return res.status(500).json({ msg: error.message });
+  }
+};
+
+export const getBorrowingById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const borrowing = await ModelBorrowing.findByPk(id);
+    if (!borrowing)
+      return res.status(404).json({ msg: "Peminjaman tidak ditemukan!" });
+    return res.status(200).json(borrowing);
+  } catch (error) {
+    return res.status(500).json(error);
   }
 };
 
@@ -57,11 +70,58 @@ export const createBorrowing = async (req, res) => {
       division,
       loan_date,
       return_date,
+      status: "dipinjam",
     });
 
     return res.status(201).json({ msg: "Peminjaman berhasil dibuat" });
   } catch (error) {
     return res.status(500).json({ msg: error.message });
+  }
+};
+
+export const updateBorrowing = async (req, res) => {
+  const { id_archive, borrowers_name, division, loan_date, return_date } =
+    req.body;
+  const { id } = req.params;
+
+  const borrowing = await ModelBorrowing.findByPk(id);
+  if (!borrowing)
+    return res.status(404).json({ msg: "Peminjaman tidak ditemukan!" });
+
+  try {
+    await borrowing.update({
+      id_archive,
+      borrowers_name,
+      division,
+      loan_date,
+      return_date,
+    });
+
+    return res.status(200).json({ msg: "Peminjaman berhasil diperbarui" });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json(error);
+  }
+};
+
+export const updateBorrowingStatus = async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  const borrowing = await ModelBorrowing.findByPk(id);
+  if (!borrowing)
+    return res.status(404).json({ msg: "Peminjaman tidak ditemukan!" });
+
+  try {
+    await borrowing.update({
+      status,
+    });
+
+    return res
+      .status(200)
+      .json({ msg: "Status peminjaman berhasil diperbarui" });
+  } catch (error) {
+    return res.status(500).json(error);
   }
 };
 
