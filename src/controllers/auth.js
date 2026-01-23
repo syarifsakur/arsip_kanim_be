@@ -1,6 +1,6 @@
-import Admin from '../models/ModelAdmin.js';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import Admin from "../models/ModelUser.js";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
 export const register = async (req, res) => {
   const { username, password } = req.body;
@@ -14,36 +14,36 @@ export const register = async (req, res) => {
       password: hashedPassword,
     });
 
-    return res.status(201).json({ message: 'Berhasil Membuat Akun!' });
+    return res.status(201).json({ message: "Berhasil Membuat Akun!" });
   } catch (error) {
     return res.status(500).json(error);
   }
 };
 
-export const  Login = async (req, res) => {
+export const Login = async (req, res) => {
   const { username, password } = req.body;
 
   try {
     const user = await Admin.findOne({ where: { username } });
 
     if (!user) {
-      return res.status(404).json({ message: 'Username tidak ditemukan!' });
+      return res.status(404).json({ message: "Username tidak ditemukan!" });
     }
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(400).json({ message: 'Password salah!' });
+      return res.status(400).json({ message: "Password salah!" });
     }
 
     const token = jwt.sign(
       { userId: user.uuid },
       process.env.ACCESS_SECRET_TOKEN,
-      { expiresIn: '10m' }
+      { expiresIn: "10m" },
     );
 
     const refreshToken = jwt.sign(
       { userId: user.uuid },
       process.env.REFRESH_SECRET_TOKEN,
-      { expiresIn: '1d' }
+      { expiresIn: "1d" },
     );
 
     await Admin.update({ token: refreshToken }, { where: { uuid: user.uuid } });
@@ -51,9 +51,9 @@ export const  Login = async (req, res) => {
     const dataForClient = {
       userId: user.uuid,
       username: user.username,
+      role: user.role,
     };
-
-    res.cookie('token', refreshToken, {
+    res.cookie("token", refreshToken, {
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000,
       secure: false,
@@ -64,7 +64,7 @@ export const  Login = async (req, res) => {
     console.log(error);
     return res
       .status(500)
-      .json({ message: 'Terjadi kesalahan server.', error });
+      .json({ message: "Terjadi kesalahan server.", error });
   }
 };
 
@@ -88,22 +88,23 @@ export const refreshTokenAuth = async (req, res) => {
         const userId = decoded.userId;
 
         const token = jwt.sign({ userId }, process.env.ACCESS_SECRET_TOKEN, {
-          expiresIn: '10m',
+          expiresIn: "10m",
         });
 
         const dataForClient = {
           userId: user.uuid,
           username: user.username,
+          role: user.role,
         };
 
         return res.status(200).json({ dataForClient, token: token });
-      }
+      },
     );
   } catch (error) {
-    console.error('Error in refreshTokenAuth:', error);
+    console.error("Error in refreshTokenAuth:", error);
     return res
       .status(500)
-      .json({ message: 'Server error', detail: error.message });
+      .json({ message: "Server error", detail: error.message });
   }
 };
 
@@ -117,7 +118,7 @@ export const changePassword = async (req, res) => {
     const isMatch = await bcrypt.compare(password_old, user.password);
 
     if (!isMatch)
-      return res.status(400).json({ password_old: 'Password anda salah.' });
+      return res.status(400).json({ password_old: "Password anda salah." });
 
     const salt = await bcrypt.genSalt();
     const hashPassword = await bcrypt.hash(password_new, salt);
@@ -130,10 +131,10 @@ export const changePassword = async (req, res) => {
         where: {
           uuid: userId,
         },
-      }
+      },
     );
 
-    return res.status(200).json({ message: 'Password berhasil diubah.' });
+    return res.status(200).json({ message: "Password berhasil diubah." });
   } catch (error) {
     return res.status(500).json(error);
   }
@@ -145,10 +146,12 @@ export const logout = async (req, res) => {
   try {
     await Admin.update({ token: null }, { where: { uuid: userId } });
 
-    res.clearCookie('token');
-    return res.status(200).json({ message: 'Anda berhasil logout!' });
+    res.clearCookie("token");
+    return res.status(200).json({ message: "Anda berhasil logout!" });
   } catch (error) {
     console.log(error);
     return res.status(500).json({ message: error.message });
   }
 };
+
+

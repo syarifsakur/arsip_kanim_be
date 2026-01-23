@@ -1,6 +1,7 @@
 import { DataTypes, ENUM } from "sequelize";
 import db from "../configs/database.js";
 import ModelArchive from "./ModelArchive.js";
+import User from "./ModelUser.js";
 
 const ModelBorrowing = db.define(
   "borrowing",
@@ -41,7 +42,13 @@ const ModelBorrowing = db.define(
     },
 
     status:{
-      type:ENUM('dipinjam','dikembalikan'),
+      type:ENUM('menunggu di setujui','sudah disetujui','di tolak'),
+    },
+    created:{
+      type: DataTypes.STRING,
+    },
+    updated:{
+      type: DataTypes.STRING,
     }
   },
   {
@@ -56,5 +63,11 @@ ModelBorrowing.belongsTo(ModelArchive, {
   onDelete: "cascade",
   onUpdate: "cascade",
 });
+ModelBorrowing.belongsTo(User,{
+  foreignKey:"created",
+  as:"userCreated",
+  onDelete:"cascade",
+  onUpdate:"cascade",
+})
 
 export default ModelBorrowing;

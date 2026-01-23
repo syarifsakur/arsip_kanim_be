@@ -11,6 +11,7 @@ import RouteAuth from "./routers/RouteAuth.js";
 // import RouteAdmin from "./routers/RouteAdmin.js";
 import RouteArchive from "./routers/RouteArchive.js";
 import RouteBorrowing from "./routers/RouteBorrowing.js";
+import RouteUser from "./routers/RouteUser.js";
 
 import createModel from "./models/ModelBorrowing.js";
 import { Login } from "./controllers/auth.js";
@@ -53,6 +54,7 @@ app.use(cookieParser());
 app.use("/auth", RouteAuth);
 app.use("/archive", RouteArchive);
 app.use("/borrowing", RouteBorrowing);
+app.use("/user", RouteUser);
 
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);

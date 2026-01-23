@@ -9,21 +9,6 @@ export const getBorrowings = async (req, res) => {
           {
             model: ModelArchive,
             as: "archive",
-            // attributes: [
-            //   "uuid",
-            //   "application_number",
-            //   "application_date",
-            //   "application_type",
-            //   "passport_type",
-            //   "passport_number",
-            //   "passport_registration_number",
-            //   "service_method",
-            //   "full_name",
-            //   "date_of_birth",
-            //   "gender",
-            //   "issue_date",
-            //   "expiration_date",
-            // ],
           },
         ],
         attributes: [
@@ -55,9 +40,32 @@ export const getBorrowingById = async (req, res) => {
   }
 };
 
+export const getBorrowingUser = async (req, res) => {
+  const { userId } = req;
+
+  try {
+    const { rows: response, count: total } =
+      await ModelBorrowing.findAndCountAll({
+        where: { created: userId },
+        include: [
+          {
+            model: ModelArchive,
+            as: "archive",
+          },
+        ],
+        order: [["createdAt", "DESC"]],
+      });
+
+    return res.status(200).json({ data: response, total: total });
+  } catch (error) {
+    return res.status(500).json({ msg: error.message });
+  }
+};
+
 export const createBorrowing = async (req, res) => {
   const { id_archive, borrowers_name, division, loan_date, return_date } =
     req.body;
+  const { userId } = req;
 
   const archive = await ModelArchive.findByPk(id_archive);
   if (!archive)
@@ -70,7 +78,8 @@ export const createBorrowing = async (req, res) => {
       division,
       loan_date,
       return_date,
-      status: "dipinjam",
+      status: "menunggu di setujui",
+      created: userId,
     });
 
     return res.status(201).json({ msg: "Peminjaman berhasil dibuat" });

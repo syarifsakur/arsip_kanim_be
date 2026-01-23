@@ -1,15 +1,15 @@
-import jwt from 'jsonwebtoken';
-import Admin from '../models/ModelAdmin.js';
+import jwt from "jsonwebtoken";
+import Admin from "../models/ModelUser.js";
 
 const verifyToken = async (req, res, next) => {
   try {
-    const authHeader = req.headers['authorization'];
+    const authHeader = req.headers["authorization"];
     if (!authHeader)
-      return res.status(401).json({ message: 'Token not found!' });
+      return res.status(401).json({ message: "Token not found!" });
 
-    const token = authHeader.split(' ')[1];
+    const token = authHeader.split(" ")[1];
 
-    if (!token) return res.status(401).json({ message: 'Token not found!' });
+    if (!token) return res.status(401).json({ message: "Token not found!" });
 
     jwt.verify(token, process.env.ACCESS_SECRET_TOKEN, async (err, decoded) => {
       if (err) {
@@ -28,8 +28,8 @@ const verifyToken = async (req, res, next) => {
       next();
     });
   } catch (error) {
-    console.error('Kesalahan Verivy Token:', error.message);
-    return res.status(500).json({ message: 'Internal Server Error' });
+    console.error("Kesalahan Verivy Token:", error.message);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 

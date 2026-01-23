@@ -1,8 +1,9 @@
-import { DataTypes } from 'sequelize';
-import db from '../configs/database.js';
+import { DataTypes } from "sequelize";
+import db from "../configs/database.js";
+import bcrypt from "bcryptjs";
 
-const Admin = db.define(
-  'admin',
+const User = db.define(
+  "user",
   {
     uuid: {
       type: DataTypes.STRING,
@@ -24,10 +25,18 @@ const Admin = db.define(
     token: {
       type: DataTypes.STRING,
     },
+    division: {
+      type: DataTypes.STRING,
+    },
+    role: {
+      type: DataTypes.ENUM("superadmin", "admin", "user"),
+    },
   },
   {
     freezeTableName: true,
-  }
+  },
 );
 
-export default Admin;
+export default User;
+
+

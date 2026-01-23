@@ -13,7 +13,7 @@ const ModelArchive = db.define(
         notEmpty: true,
       },
     },
-    no_archive:{
+    no_archive: {
       type: DataTypes.STRING,
     },
     application_number: {
@@ -29,7 +29,7 @@ const ModelArchive = db.define(
         "BARU",
         "GANTI (PENUH / HALAMAN PENUH)",
         "GANTI (HABIS MASA BERLAKU)",
-        "GANTI (HILANG)"
+        "GANTI (HILANG)",
       ),
     },
 
@@ -57,7 +57,7 @@ const ModelArchive = db.define(
       type: DataTypes.ENUM(
         "paspor biasa elektronik laminasi 5 tahun",
         "paspor biasa elektronik laminasi 10 tahun",
-        "PASPOR BIASA 24 H"
+        "PASPOR BIASA 24 H",
       ),
     },
 
@@ -102,12 +102,24 @@ const ModelArchive = db.define(
     file_path: {
       type: DataTypes.STRING,
     },
+    location: {
+      type: DataTypes.STRING,
+      comment:
+        "Format: YYYYCLSR (Tahun, Cabinet, Side, Rack) - misal: 2025010205",
+    },
+    citizenship: {
+      type: DataTypes.ENUM("wni", "wna"),
+    },
+    application_status: {
+      type: DataTypes.ENUM("active", "inactive"),
+      defaultValue: "active",
+    },
   },
 
   {
     freezeTableName: true,
     timestamps: true,
-  }
+  },
 );
 
 export default ModelArchive;
