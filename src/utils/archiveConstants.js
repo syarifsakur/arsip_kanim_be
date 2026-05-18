@@ -1,0 +1,6 @@
+export const RACKS_PER_SIDE = 5;
+export const SIDES_PER_CABINET = 2;
+export const ARCHIVE_PER_RACK = 10;
+export const TOTAL_PER_CABINET =
+  RACKS_PER_SIDE * SIDES_PER_CABINET * ARCHIVE_PER_RACK;
+export const TOTAL_CAPACITY = 2 * TOTAL_PER_CABINET;

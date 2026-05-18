@@ -15,6 +15,7 @@ import RouteUser from "./routers/RouteUser.js";
 
 import createModel from "./models/ModelBorrowing.js";
 import { Login } from "./controllers/auth.js";
+import { purgeExpiredBorrowings } from "./controllers/borrowing.js";
 
 const app = express();
 dotenv.config();
@@ -25,12 +26,38 @@ async function initializeDatabase() {
     console.log("Database connected");
     // await db.sync()
     // await createModel.sync({ alter: true });
+
+    if (!borrowingCleanupTimer) {
+      await runBorrowingCleanup();
+      borrowingCleanupTimer = setInterval(
+        runBorrowingCleanup,
+        BORROWING_CLEANUP_INTERVAL_MS,
+      );
+
+      if (typeof borrowingCleanupTimer.unref === "function") {
+        borrowingCleanupTimer.unref();
+      }
+    }
   } catch (error) {
     console.error("Database error:", error);
   }
 }
 
 initializeDatabase();
+
+const BORROWING_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+let borrowingCleanupTimer;
+
+const runBorrowingCleanup = async () => {
+  try {
+    const removed = await purgeExpiredBorrowings();
+    if (removed > 0) {
+      console.log(`Borrowing cleanup removed ${removed} expired record(s)`);
+    }
+  } catch (error) {
+    console.error("Borrowing cleanup error:", error);
+  }
+};
 
 const limiter = rateLimit({
   windowMs: 60 * 1000,
@@ -42,7 +69,7 @@ app.use(
   cors({
     credentials: true,
     origin: "http://localhost:5173",
-  })
+  }),
 );
 app.use("/public", express.static("public"));
 app.use("/uploads", express.static("uploads"));

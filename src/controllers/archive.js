@@ -3,117 +3,33 @@ import path from "path";
 import XLSX from "xlsx";
 import fs from "fs";
 import { Op } from "sequelize";
-
-// Normalize date string to YYYY-MM-DD. Supports 'YYYY-MM-DD' and 'DD-MM-YYYY'.
-const normalizeDateYMD = (value) => {
-  if (!value || typeof value !== "string") return null;
-  const parts = value.split("-");
-  if (parts.length !== 3) return null;
-  const [a, b, c] = parts;
-  if (a.length === 4) return `${a}-${b}-${c}`;
-  if (c.length === 4) return `${c}-${b}-${a}`;
-  return null;
-};
-
-// Generate no_archive from date_of_birth (-> 1-YYMMDD)
-const generateNoArchive = (dob) => {
-  const ymd = normalizeDateYMD(dob);
-  if (!ymd) return null;
-  const [yyyy, mm, dd] = ymd.split("-");
-  const yy = yyyy.slice(-2);
-  return `1-${yy}${mm}${dd}`;
-};
-
-const generateLocationAuto = async (yearStorage) => {
-  try {
-    const count = await ModelArchive.count({
-      where: {
-        location: {
-          [Op.like]: `${yearStorage}%`,
-        },
-      },
-    });
-    const position = count + 1;
-
-    const RACKS_PER_SIDE = 5;
-    const SIDES_PER_CABINET = 2;
-    const ARCHIVE_PER_RACK = 10;
-    const TOTAL_PER_CABINET =
-      RACKS_PER_SIDE * SIDES_PER_CABINET * ARCHIVE_PER_RACK; 
-    const TOTAL_CAPACITY = 2 * TOTAL_PER_CABINET; 
-
-    if (position > TOTAL_CAPACITY) {
-      throw new Error(
-        `Kapasitas penyimpanan tahun ${yearStorage} penuh! (Max ${TOTAL_CAPACITY} archive)`,
-      );
-    }
-
-    // Hitung cabinet (1-100 = Cabinet 1, 101-200 = Cabinet 2)
-    const cabinet = Math.floor((position - 1) / TOTAL_PER_CABINET) + 1;
-
-    // Hitung posisi dalam cabinet (0-99)
-    const posInCabinet = (position - 1) % TOTAL_PER_CABINET;
-
-    // Hitung side (0 sampai posisi side x kuota per side)
-    const sideQuotaPerCabinet = RACKS_PER_SIDE * ARCHIVE_PER_RACK; // 50
-    const side = Math.floor(posInCabinet / sideQuotaPerCabinet) + 1;
-
-    // Hitung posisi dalam side (0-49)
-    const posInSide = posInCabinet % sideQuotaPerCabinet;
-
-    // Hitung rack berdasarkan posisi dan kapasitas per rack
-    const rack = Math.floor(posInSide / ARCHIVE_PER_RACK) + 1;
-
-    // Format: YYYYCLSR (Tahun, Cabinet 2digit, Side 2digit, Rack 2digit)
-    const location = `${yearStorage}${String(cabinet).padStart(2, "0")}${String(side).padStart(2, "0")}${String(rack).padStart(2, "0")}`;
-
-    return {
-      location,
-      cabinet,
-      side,
-      rack,
-      position,
-      totalForYear: position,
-    };
-  } catch (error) {
-    throw error;
-  }
-};
-
-// Convert various Excel cell date formats to YYYY-MM-DD
-const convertDateCell = (value) => {
-  if (!value) return null;
-
-  if (typeof value === "string") {
-    const s = value.trim();
-    const m = s.match(/^(\d{2})[-\/]?(\d{2})[-\/]?(\d{4})$/);
-    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
-    const m2 = s.match(/^(\d{4})[-\/]?(\d{2})[-\/]?(\d{2})$/);
-    if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
-    return null;
-  }
-
-  if (typeof value === "number") {
-    try {
-      const d = XLSX.SSF.parse_date_code(value);
-      if (d && d.y && d.m && d.d) {
-        const yyyy = d.y;
-        const mm = String(d.m).padStart(2, "0");
-        const dd = String(d.d).padStart(2, "0");
-        return `${yyyy}-${mm}-${dd}`;
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  return null;
-};
+import { normalizeDateYMD } from "../utils/normalizeDate.js";
+import { generateNoArchive } from "../utils/generateArchiveNumber.js";
+import { convertDateCell } from "../utils/convertDateCell.js";
+import { TOTAL_CAPACITY } from "../utils/archiveConstants.js";
+import {
+  calcLocationFromPosition,
+  extractYearFromArchive,
+} from "../utils/archiveLocation.js";
+import {
+  repackArchivesByYear,
+  generateLocationAuto,
+} from "../utils/archiveManagement.js";
 
 export const getArchive = async (req, res) => {
   try {
     const { rows: response, count: total } = await ModelArchive.findAndCountAll(
       {
-        order: [["createdAt", "DESC"]],
+        order: [
+          [
+            ModelArchive.sequelize.literal(
+              "CASE WHEN citizenship = 'WNA' THEN 1 ELSE 0 END",
+            ),
+            "ASC",
+          ],
+          ["location", "ASC"],
+          ["createdAt", "DESC"],
+        ],
       },
     );
 
@@ -153,6 +69,7 @@ export const createArchive = async (req, res) => {
     province,
     district_city,
     sub_district,
+    citizenship,
   } = req.body;
 
   if (!req.files) return res.status(422).json({ img: "Img harus di isi!" });
@@ -183,85 +100,105 @@ export const createArchive = async (req, res) => {
 
   try {
     const normalizedDob = normalizeDateYMD(date_of_birth);
-    const no_archive = generateNoArchive(normalizedDob || date_of_birth);
+    const no_archive = generateNoArchive(
+      normalizedDob || date_of_birth,
+      citizenship,
+    );
 
-    // Extract tahun dari application_date (format: YYYY-MM-DD atau DD-MM-YYYY)
-    const normalizedAppDate = normalizeDateYMD(application_date);
-    const yearStorage = normalizedAppDate
-      ? normalizedAppDate.split("-")[0]
-      : application_date;
-
-    // Generate lokasi penyimpanan otomatis (format: YYYYCLSR)
-    // Hitung total archive yang sudah ada untuk tahun ini
-    const existingCount = await ModelArchive.count({
-      where: {
-        location: {
-          [Op.like]: `${yearStorage}%`,
-        },
-      },
-    });
-
-    const position = existingCount + 1;
-
-    // Konstanta kapasitas
-    const RACKS_PER_SIDE = 5;
-    const SIDES_PER_CABINET = 2;
-    const ARCHIVE_PER_RACK = 10;
-    const TOTAL_PER_CABINET =
-      RACKS_PER_SIDE * SIDES_PER_CABINET * ARCHIVE_PER_RACK;
-    const TOTAL_CAPACITY = 2 * TOTAL_PER_CABINET;
-
-    if (position > TOTAL_CAPACITY) {
-      return res.status(400).json({
-        msg: `Kapasitas penyimpanan tahun ${yearStorage} penuh! (Max ${TOTAL_CAPACITY} archive)`,
+    // Extract tahun dari date_of_birth (format: YYYY-MM-DD atau DD-MM-YYYY)
+    const normalizedDobYear = normalizeDateYMD(date_of_birth);
+    if (!normalizedDobYear) {
+      return res.status(422).json({
+        msg: "Tanggal lahir (date_of_birth) harus diisi dan valid (YYYY-MM-DD)",
       });
     }
+    const yearStorage = normalizedDobYear.split("-")[0];
 
-    // Hitung lokasi
-    const cabinet = Math.floor((position - 1) / TOTAL_PER_CABINET) + 1;
-    const posInCabinet = (position - 1) % TOTAL_PER_CABINET;
-    const sideQuotaPerCabinet = RACKS_PER_SIDE * ARCHIVE_PER_RACK;
-    const side = Math.floor(posInCabinet / sideQuotaPerCabinet) + 1;
-    const posInSide = posInCabinet % sideQuotaPerCabinet;
-    const rack = Math.floor(posInSide / ARCHIVE_PER_RACK) + 1;
+    const t = await ModelArchive.sequelize.transaction();
+    try {
+      const existing = await ModelArchive.findAll({
+        where: { application_status: "active" },
+        attributes: [
+          "uuid",
+          "location",
+          "application_date",
+          "date_of_birth",
+          "citizenship",
+          "createdAt",
+        ],
+        order: [
+          [
+            ModelArchive.sequelize.literal(
+              "CASE WHEN citizenship = 'WNA' THEN 1 ELSE 0 END",
+            ),
+            "ASC",
+          ],
+          ["date_of_birth", "ASC"],
+          ["createdAt", "ASC"],
+        ],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
 
-    const location = `${yearStorage}${String(cabinet).padStart(2, "0")}${String(side).padStart(2, "0")}${String(rack).padStart(2, "0")}`;
+      const repack = repackArchivesByYear(existing, [
+        {
+          tempId: "new",
+          year: yearStorage,
+          payload: {
+            application_number,
+            application_date,
+            passport_purpose,
+            application_type,
+            passport_number,
+            passport_type,
+            service_method,
+            full_name,
+            date_of_birth: normalizedDob || date_of_birth,
+            gender,
+            passport_registration_number,
+            issue_date,
+            expiration_date,
+            province,
+            district_city,
+            sub_district,
+            citizenship,
+            no_archive,
+            file: filename,
+            file_path: pathFile,
+            location: null,
+          },
+        },
+      ]);
 
-    await ModelArchive.create({
-      application_number,
-      application_date,
-      application_number,
-      passport_purpose,
-      application_type,
-      passport_number,
-      passport_type,
-      service_method,
-      full_name,
-      date_of_birth: normalizedDob || date_of_birth,
-      gender,
-      passport_registration_number,
-      issue_date,
-      expiration_date,
-      province,
-      district_city,
-      sub_district,
-      no_archive,
-      file: filename,
-      file_path: pathFile,
-      location: location,
-    });
+      if (repack.total > TOTAL_CAPACITY) {
+        await t.rollback();
+        return res.status(400).json({
+          msg: `Kapasitas penyimpanan penuh! (Max ${TOTAL_CAPACITY} archive)`,
+        });
+      }
 
-    return res.status(201).json({
-      msg: "Archive created successfully",
-      location: location,
-      details: {
-        year: yearStorage,
-        cabinet: cabinet,
-        side: side,
-        rack: rack,
-        position: position,
-      },
-    });
+      // Apply location updates for shifted archives
+      for (const upd of repack.updates) {
+        await ModelArchive.update(
+          { location: upd.location },
+          { where: { uuid: upd.uuid }, transaction: t },
+        );
+      }
+
+      // repack.newRecords harus berisi 1 record (yang baru)
+      const newRecord = repack.newRecords[0];
+      await ModelArchive.create(newRecord, { transaction: t });
+
+      await t.commit();
+
+      return res.status(201).json({
+        msg: "Archive created successfully",
+        location: newRecord.location,
+      });
+    } catch (err) {
+      await t.rollback();
+      throw err;
+    }
   } catch (error) {
     return res.status(500).json({ msg: error.message });
   }
@@ -307,7 +244,6 @@ export const createImportArchive = async (req, res) => {
       });
     }
 
-    // Build duplicate set from DB
     const existing = await ModelArchive.findAll({
       attributes: ["application_number"],
     });
@@ -318,7 +254,6 @@ export const createImportArchive = async (req, res) => {
 
     const insertData = [];
 
-    // Process only rows below header
     for (let i = headerIndex + 1; i < rows.length; i++) {
       const row = rows[i];
       if (!row || row.length < 17) continue; // require all key columns
@@ -342,6 +277,7 @@ export const createImportArchive = async (req, res) => {
         province,
         district_city,
         sub_district,
+        citizenship,
       ] = row;
 
       // Validate application number (second column). Skip header/invalid rows.
@@ -354,9 +290,8 @@ export const createImportArchive = async (req, res) => {
 
       const dobYmd = convertDateCell(date_of_birth);
       const appDateYmd = convertDateCell(application_date);
-      const yearStorage = appDateYmd
-        ? appDateYmd.split("-")[0]
-        : new Date().getFullYear();
+      const dobYear = dobYmd ? dobYmd.split("-")[0] : null;
+      const yearStorage = dobYear || new Date().getFullYear();
 
       insertData.push({
         application_number: appNo,
@@ -375,63 +310,74 @@ export const createImportArchive = async (req, res) => {
         province: province || null,
         district_city: district_city || null,
         sub_district: sub_district || null,
-        no_archive: generateNoArchive(dobYmd),
+        citizenship: citizenship || null,
+        no_archive: generateNoArchive(dobYmd, citizenship),
         year_storage: yearStorage,
         created_by: req.name || "system",
       });
     }
 
     if (insertData.length > 0) {
-      // Generate location otomatis untuk setiap archive dengan tracking per tahun
-      const yearCounters = {}; // Track posisi per tahun
+      const t = await ModelArchive.sequelize.transaction();
+      try {
+        const existing = await ModelArchive.findAll({
+          where: { application_status: "active" },
+          attributes: [
+            "uuid",
+            "location",
+            "application_date",
+            "date_of_birth",
+            "citizenship",
+          ],
+          order: [
+            [
+              ModelArchive.sequelize.literal(
+                "CASE WHEN citizenship = 'WNA' THEN 1 ELSE 0 END",
+              ),
+              "ASC",
+            ],
+            ["date_of_birth", "ASC"],
+            ["createdAt", "ASC"],
+          ],
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
 
-      for (let i = 0; i < insertData.length; i++) {
-        const year = insertData[i].year_storage;
+        const newItems = insertData.map((payload, idx) => ({
+          tempId: `new-${idx}`,
+          year: payload.year_storage,
+          payload,
+        }));
 
-        // Inisialisasi counter untuk tahun ini jika belum ada
-        if (!yearCounters[year]) {
-          // Hitung total archive yang sudah ada di database untuk tahun ini
-          const existingCount = await ModelArchive.count({
-            where: {
-              location: {
-                [Op.like]: `${year}%`,
-              },
-            },
+        const repack = repackArchivesByYear(existing, newItems);
+
+        if (repack.total > TOTAL_CAPACITY) {
+          await t.rollback();
+          return res.status(400).json({
+            message: `Kapasitas penyimpanan penuh! (Max ${TOTAL_CAPACITY} archive)`,
           });
-          yearCounters[year] = existingCount;
         }
 
-        // Increment counter untuk tahun ini
-        yearCounters[year]++;
-        const position = yearCounters[year];
-
-        // Konstanta kapasitas
-        const RACKS_PER_SIDE = 5;
-        const SIDES_PER_CABINET = 2;
-        const ARCHIVE_PER_RACK = 10;
-        const TOTAL_PER_CABINET =
-          RACKS_PER_SIDE * SIDES_PER_CABINET * ARCHIVE_PER_RACK;
-        const TOTAL_CAPACITY = 2 * TOTAL_PER_CABINET;
-
-        if (position > TOTAL_CAPACITY) {
-          throw new Error(
-            `Kapasitas penyimpanan tahun ${year} penuh! (Max ${TOTAL_CAPACITY} archive)`,
+        for (const upd of repack.updates) {
+          await ModelArchive.update(
+            { location: upd.location },
+            { where: { uuid: upd.uuid }, transaction: t },
           );
         }
 
-        // Hitung lokasi
-        const cabinet = Math.floor((position - 1) / TOTAL_PER_CABINET) + 1;
-        const posInCabinet = (position - 1) % TOTAL_PER_CABINET;
-        const sideQuotaPerCabinet = RACKS_PER_SIDE * ARCHIVE_PER_RACK;
-        const side = Math.floor(posInCabinet / sideQuotaPerCabinet) + 1;
-        const posInSide = posInCabinet % sideQuotaPerCabinet;
-        const rack = Math.floor(posInSide / ARCHIVE_PER_RACK) + 1;
+        await ModelArchive.bulkCreate(
+          repack.newRecords.map((r) => {
+            const { year_storage, ...rest } = r;
+            return rest;
+          }),
+          { transaction: t },
+        );
 
-        const location = `${year}${String(cabinet).padStart(2, "0")}${String(side).padStart(2, "0")}${String(rack).padStart(2, "0")}`;
-        insertData[i].location = location;
+        await t.commit();
+      } catch (err) {
+        await t.rollback();
+        throw err;
       }
-
-      await ModelArchive.bulkCreate(insertData);
     }
 
     return res.status(201).json({
@@ -450,11 +396,22 @@ export const createImportArchive = async (req, res) => {
 
 export const updateArchive = async (req, res) => {
   const { id } = req.params;
+  const t = await ModelArchive.sequelize.transaction();
 
   try {
-    const archive = await ModelArchive.findByPk(id);
+    const archive = await ModelArchive.findByPk(id, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
     if (!archive)
       return res.status(404).json({ msg: "Archive tidak ditemukan!" });
+
+    const currentArchive = archive.get({ plain: true });
+    const resolveUpdatedValue = (value, fallback) => {
+      if (value === undefined || value === null) return fallback;
+      if (typeof value === "string" && value.trim() === "") return fallback;
+      return value;
+    };
 
     const {
       application_number,
@@ -474,46 +431,149 @@ export const updateArchive = async (req, res) => {
       district_city,
       sub_district,
       location,
+      citizenship,
     } = req.body;
 
     const payload = {
-      application_number,
-      application_date,
-      application_type,
-      passport_purpose,
-      passport_number,
-      passport_type,
-      service_method,
-      full_name,
-      date_of_birth,
-      gender,
-      passport_registration_number,
-      issue_date,
-      expiration_date,
-      province,
-      district_city,
-      sub_district,
-      location,
+      application_number: resolveUpdatedValue(
+        application_number,
+        currentArchive.application_number,
+      ),
+      application_date: resolveUpdatedValue(
+        application_date,
+        currentArchive.application_date,
+      ),
+      application_type: resolveUpdatedValue(
+        application_type,
+        currentArchive.application_type,
+      ),
+      passport_purpose: resolveUpdatedValue(
+        passport_purpose,
+        currentArchive.passport_purpose,
+      ),
+      passport_number: resolveUpdatedValue(
+        passport_number,
+        currentArchive.passport_number,
+      ),
+      passport_type: resolveUpdatedValue(
+        passport_type,
+        currentArchive.passport_type,
+      ),
+      service_method: resolveUpdatedValue(
+        service_method,
+        currentArchive.service_method,
+      ),
+      full_name: resolveUpdatedValue(full_name, currentArchive.full_name),
+      date_of_birth: resolveUpdatedValue(
+        date_of_birth,
+        currentArchive.date_of_birth,
+      ),
+      gender: resolveUpdatedValue(gender, currentArchive.gender),
+      passport_registration_number: resolveUpdatedValue(
+        passport_registration_number,
+        currentArchive.passport_registration_number,
+      ),
+      issue_date: resolveUpdatedValue(issue_date, currentArchive.issue_date),
+      expiration_date: resolveUpdatedValue(
+        expiration_date,
+        currentArchive.expiration_date,
+      ),
+      province: resolveUpdatedValue(province, currentArchive.province),
+      district_city: resolveUpdatedValue(
+        district_city,
+        currentArchive.district_city,
+      ),
+      sub_district: resolveUpdatedValue(
+        sub_district,
+        currentArchive.sub_district,
+      ),
+      location: resolveUpdatedValue(location, currentArchive.location),
+      citizenship: resolveUpdatedValue(citizenship, currentArchive.citizenship),
     };
 
-    // ====== TANPA FILE BARU ======
-    if (!req.files || !req.files.file) {
-      await archive.update(payload);
-      return res.status(200).json({ msg: "Archive updated successfully" });
+    // Jika citizenship berubah, regenerate no_archive
+    const citizenshipChanged =
+      payload.citizenship !== currentArchive.citizenship;
+    if (citizenshipChanged) {
+      const dobForArchive =
+        payload.date_of_birth || currentArchive.date_of_birth;
+      const newNoArchive = generateNoArchive(
+        dobForArchive,
+        payload.citizenship,
+      );
+      if (newNoArchive) {
+        payload.no_archive = newNoArchive;
+      }
     }
 
-    // ====== DENGAN FILE BARU ======
+    const isActiveArchive = currentArchive.application_status === "active";
+
+    if (!req.files || !req.files.file) {
+      await archive.update(payload, { transaction: t });
+
+      if (isActiveArchive) {
+        const actives = await ModelArchive.findAll({
+          where: { application_status: "active" },
+          attributes: [
+            "uuid",
+            "location",
+            "application_date",
+            "date_of_birth",
+            "citizenship",
+            "createdAt",
+          ],
+          order: [
+            [
+              ModelArchive.sequelize.literal(
+                "CASE WHEN citizenship = 'WNA' THEN 1 ELSE 0 END",
+              ),
+              "ASC",
+            ],
+            ["date_of_birth", "ASC"],
+            ["createdAt", "ASC"],
+          ],
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+
+        const repack = repackArchivesByYear(actives, []);
+
+        if (repack.total > TOTAL_CAPACITY) {
+          await t.rollback();
+          return res.status(400).json({
+            msg: `Kapasitas penyimpanan penuh! (Max ${TOTAL_CAPACITY} archive)`,
+          });
+        }
+
+        for (const upd of repack.updates) {
+          await ModelArchive.update(
+            { location: upd.location },
+            { where: { uuid: upd.uuid }, transaction: t },
+          );
+        }
+      }
+
+      await archive.reload({ transaction: t });
+      await t.commit();
+      return res.status(200).json({
+        msg: "Archive updated successfully",
+        updatedArchive: archive,
+      });
+    }
+
     const file = req.files.file;
     const fileSize = file.data.length;
     const ext = path.extname(file.name).toLowerCase();
     const allowedTypes = [".png", ".jpg", ".jpeg", ".pdf"];
 
     if (!allowedTypes.includes(ext)) {
+      await t.rollback();
       return res
         .status(422)
         .json({ msg: "Format file tidak didukung! (PDF/PNG/JPG/JPEG)" });
     }
     if (fileSize > 30 * 1024 * 1024) {
+      await t.rollback();
       return res
         .status(422)
         .json({ msg: "Ukuran file terlalu besar! (maks 30MB)" });
@@ -528,14 +588,68 @@ export const updateArchive = async (req, res) => {
       "host",
     )}/public/archive/${filename}`;
 
-    await archive.update({
-      ...payload,
-      file: filename,
-      file_path,
-    });
+    await archive.update(
+      {
+        ...payload,
+        file: filename,
+        file_path,
+      },
+      { transaction: t },
+    );
 
-    return res.status(200).json({ msg: "Archive updated successfully" });
+    if (isActiveArchive) {
+      const actives = await ModelArchive.findAll({
+        where: { application_status: "active" },
+        attributes: [
+          "uuid",
+          "location",
+          "application_date",
+          "date_of_birth",
+          "citizenship",
+          "createdAt",
+        ],
+        order: [
+          [
+            ModelArchive.sequelize.literal(
+              "CASE WHEN citizenship = 'WNA' THEN 1 ELSE 0 END",
+            ),
+            "ASC",
+          ],
+          ["date_of_birth", "ASC"],
+          ["createdAt", "ASC"],
+        ],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      const repack = repackArchivesByYear(actives, []);
+
+      if (repack.total > TOTAL_CAPACITY) {
+        await t.rollback();
+        return res.status(400).json({
+          msg: `Kapasitas penyimpanan penuh! (Max ${TOTAL_CAPACITY} archive)`,
+        });
+      }
+
+      for (const upd of repack.updates) {
+        await ModelArchive.update(
+          { location: upd.location },
+          { where: { uuid: upd.uuid }, transaction: t },
+        );
+      }
+    }
+
+    await archive.reload({ transaction: t });
+    await t.commit();
+
+    return res.status(200).json({
+      msg: "Archive updated successfully",
+      updatedArchive: archive,
+    });
   } catch (error) {
+    if (!t.finished) {
+      await t.rollback();
+    }
     console.log(error);
     return res.status(500).json({ msg: "Server error", error: String(error) });
   }
@@ -545,15 +659,176 @@ export const updateArchiveStatus = async (req, res) => {
   const { id } = req.params;
   const { application_status } = req.body;
 
-  const archive = await ModelArchive.findByPk(id);
-  if (!archive)
-    return res.status(404).json({ msg: "Archive tidak ditemukan!" });
-
+  const t = await ModelArchive.sequelize.transaction();
   try {
-    await archive.update({ application_status });
-    return res.status(200).json({ msg: "Archive status updated successfully" });
+    const archive = await ModelArchive.findByPk(id, { transaction: t });
+
+    if (!archive) {
+      await t.rollback();
+      return res.status(404).json({ msg: "Archive tidak ditemukan!" });
+    }
+
+    const isDeactivating = application_status === "inactive";
+
+    // Update status archive
+    await archive.update(
+      {
+        application_status,
+        location: isDeactivating ? null : archive.location,
+      },
+      { transaction: t },
+    );
+
+    // Jika archive di-inactive, repack semua archive aktif untuk menutup celah
+    if (isDeactivating) {
+      const actives = await ModelArchive.findAll({
+        where: { application_status: "active" },
+        attributes: [
+          "uuid",
+          "location",
+          "application_date",
+          "date_of_birth",
+          "citizenship",
+          "createdAt",
+        ],
+        order: [
+          [
+            ModelArchive.sequelize.literal(
+              "CASE WHEN citizenship = 'WNA' THEN 1 ELSE 0 END",
+            ),
+            "ASC",
+          ],
+          ["date_of_birth", "ASC"],
+          ["createdAt", "ASC"],
+        ],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      // Repack untuk menutup celah yang ditinggalkan
+      const repack = repackArchivesByYear(actives, []);
+
+      if (repack.total > TOTAL_CAPACITY) {
+        await t.rollback();
+        return res.status(400).json({
+          msg: `Kapasitas penyimpanan penuh! (Max ${TOTAL_CAPACITY} archive)`,
+        });
+      }
+
+      // Update location untuk archive yang bergeser
+      for (const upd of repack.updates) {
+        await ModelArchive.update(
+          { location: upd.location },
+          { where: { uuid: upd.uuid }, transaction: t },
+        );
+      }
+
+      // Fetch semua archive yang diupdate SEBELUM commit
+      const updatedArchiveIds = [id, ...repack.updates.map((u) => u.uuid)];
+      const updatedArchives = await ModelArchive.findAll({
+        where: {
+          uuid: {
+            [Op.in]: updatedArchiveIds,
+          },
+        },
+        order: [
+          ["location", "ASC"],
+          ["date_of_birth", "ASC"],
+        ],
+        transaction: t,
+      });
+
+      await t.commit();
+
+      return res.status(200).json({
+        msg: "Archive status updated successfully",
+        archivesShifted: repack.updates.length,
+        updatedArchives: updatedArchives,
+        updates: repack.updates.map((u) => ({
+          uuid: u.uuid,
+          newLocation: u.location,
+        })),
+      });
+    }
+
+    // Reload archive untuk mendapatkan data terbaru dari database
+    await archive.reload({ transaction: t });
+
+    await t.commit();
+
+    return res.status(200).json({
+      msg: "Archive status updated successfully",
+      updatedArchive: archive,
+    });
   } catch (error) {
-    return res.status(500).json(error);
+    if (!t.finished) {
+      await t.rollback();
+    }
+    console.error(error);
+    return res.status(500).json({ msg: "Server error", error: error.message });
+  }
+};
+
+export const repackActiveArchives = async (req, res) => {
+  const t = await ModelArchive.sequelize.transaction();
+  try {
+    const actives = await ModelArchive.findAll({
+      where: { application_status: "active" },
+      attributes: [
+        "uuid",
+        "location",
+        "application_date",
+        "date_of_birth",
+        "citizenship",
+        "createdAt",
+      ],
+      order: [
+        [
+          ModelArchive.sequelize.literal(
+            "CASE WHEN citizenship = 'WNA' THEN 1 ELSE 0 END",
+          ),
+          "ASC",
+        ],
+        ["date_of_birth", "ASC"], // urutkan berdasarkan tahun lahir dulu
+        ["createdAt", "ASC"], // kemudian waktu pembuatan
+      ],
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    const repack = repackArchivesByYear(actives, []);
+
+    if (repack.total > TOTAL_CAPACITY) {
+      await t.rollback();
+      return res.status(400).json({
+        msg: `Kapasitas penyimpanan penuh! (Max ${TOTAL_CAPACITY} archive)`,
+      });
+    }
+
+    // Log untuk debug
+    console.log(
+      `Repack: ${repack.total} total archives, ${repack.updates.length} akan diupdate`,
+    );
+
+    for (const upd of repack.updates) {
+      await ModelArchive.update(
+        { location: upd.location },
+        { where: { uuid: upd.uuid }, transaction: t },
+      );
+    }
+
+    await t.commit();
+    return res.status(200).json({
+      msg: "Repack berhasil",
+      updated: repack.updates.length,
+      total: repack.total,
+    });
+  } catch (error) {
+    if (!t.finished) {
+      await t.rollback();
+    }
+    console.error("Repack error:", error);
+    return res.status(500).json({ msg: "Repack gagal", error: error.message });
   }
 };
 

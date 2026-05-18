@@ -1,8 +1,25 @@
 import ModelArchive from "../models/ModelArchive.js";
 import ModelBorrowing from "../models/ModelBorrowing.js";
+import dayjs from "dayjs";
+import { Op } from "sequelize";
+
+export const purgeExpiredBorrowings = async (transaction) => {
+  const expiredBefore = dayjs().subtract(1, "day").toDate();
+
+  return ModelBorrowing.destroy({
+    where: {
+      createdAt: {
+        [Op.lt]: expiredBefore,
+      },
+    },
+    transaction,
+  });
+};
 
 export const getBorrowings = async (req, res) => {
   try {
+    await purgeExpiredBorrowings();
+
     const { rows: response, count: total } =
       await ModelBorrowing.findAndCountAll({
         include: [
@@ -11,14 +28,7 @@ export const getBorrowings = async (req, res) => {
             as: "archive",
           },
         ],
-        attributes: [
-          "uuid",
-          "borrowers_name",
-          "division",
-          "loan_date",
-          "return_date",
-          "status",
-        ],
+        attributes: ["uuid", "borrowers_name", "division", "status"],
         order: [["createdAt", "DESC"]],
       });
 
@@ -30,6 +40,8 @@ export const getBorrowings = async (req, res) => {
 
 export const getBorrowingById = async (req, res) => {
   try {
+    await purgeExpiredBorrowings();
+
     const { id } = req.params;
     const borrowing = await ModelBorrowing.findByPk(id);
     if (!borrowing)
@@ -44,6 +56,8 @@ export const getBorrowingUser = async (req, res) => {
   const { userId } = req;
 
   try {
+    await purgeExpiredBorrowings();
+
     const { rows: response, count: total } =
       await ModelBorrowing.findAndCountAll({
         where: { created: userId },
@@ -63,21 +77,24 @@ export const getBorrowingUser = async (req, res) => {
 };
 
 export const createBorrowing = async (req, res) => {
-  const { id_archive, borrowers_name, division, loan_date, return_date } =
-    req.body;
+  const { id_archive, borrowers_name, division } = req.body;
   const { userId } = req;
+  const loanDate = dayjs().format("YYYY-MM-DD");
+  const returnDate = dayjs().add(1, "day").format("YYYY-MM-DD");
 
   const archive = await ModelArchive.findByPk(id_archive);
   if (!archive)
     return res.status(404).json({ msg: "Archive tidak ditemukan!" });
 
   try {
+    await purgeExpiredBorrowings();
+
     await ModelBorrowing.create({
       id_archive,
       borrowers_name,
       division,
-      loan_date,
-      return_date,
+      loan_date: loanDate,
+      return_date: returnDate,
       status: "menunggu di setujui",
       created: userId,
     });
@@ -89,9 +106,10 @@ export const createBorrowing = async (req, res) => {
 };
 
 export const updateBorrowing = async (req, res) => {
-  const { id_archive, borrowers_name, division, loan_date, return_date } =
-    req.body;
+  const { id_archive, borrowers_name, division } = req.body;
   const { id } = req.params;
+
+  await purgeExpiredBorrowings();
 
   const borrowing = await ModelBorrowing.findByPk(id);
   if (!borrowing)
@@ -102,8 +120,6 @@ export const updateBorrowing = async (req, res) => {
       id_archive,
       borrowers_name,
       division,
-      loan_date,
-      return_date,
     });
 
     return res.status(200).json({ msg: "Peminjaman berhasil diperbarui" });
@@ -116,6 +132,8 @@ export const updateBorrowing = async (req, res) => {
 export const updateBorrowingStatus = async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
+
+  await purgeExpiredBorrowings();
 
   const borrowing = await ModelBorrowing.findByPk(id);
   if (!borrowing)
@@ -136,6 +154,8 @@ export const updateBorrowingStatus = async (req, res) => {
 
 export const deleteBorrowing = async (req, res) => {
   try {
+    await purgeExpiredBorrowings();
+
     const { id } = req.params;
     const borrowing = await ModelBorrowing.findByPk(id);
     if (!borrowing)

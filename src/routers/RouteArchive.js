@@ -7,6 +7,7 @@ import {
   getByIdArchive,
   updateArchive,
   updateArchiveStatus,
+  repackActiveArchives,
 } from "../controllers/archive.js";
 import verifyToken from "../middlewares/VerifyToken.js";
 
@@ -18,6 +19,7 @@ router.post("/create", createArchive);
 router.post("/import", createImportArchive);
 router.put("/update/:id", updateArchive);
 router.put("/update-status/:id", updateArchiveStatus);
+router.post("/repack", repackActiveArchives);
 router.delete("/delete/:id", deleteArchive);
 
 export default router;

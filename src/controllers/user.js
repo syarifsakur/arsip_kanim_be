@@ -12,6 +12,7 @@ export const getUser = async (req, res) => {
         "createdAt",
         "updatedAt",
       ],
+      order: [["createdAt", "DESC"]],
     });
     return res.status(200).json(response);
   } catch (error) {
