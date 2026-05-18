@@ -13,7 +13,7 @@ import RouteArchive from "./routers/RouteArchive.js";
 import RouteBorrowing from "./routers/RouteBorrowing.js";
 import RouteUser from "./routers/RouteUser.js";
 
-import createModel from "./models/ModelBorrowing.js";
+import createModel from "./models/ModelArchive.js";
 import { Login } from "./controllers/auth.js";
 import { purgeExpiredBorrowings } from "./controllers/borrowing.js";
 

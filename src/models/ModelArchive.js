@@ -30,6 +30,9 @@ const ModelArchive = db.define(
         "GANTI (PENUH / HALAMAN PENUH)",
         "GANTI (HABIS MASA BERLAKU)",
         "GANTI (HILANG)",
+        "GANTI (HILANG KARENA KEADAAN KAHAR)",
+        "GANTI (RUSAK KARENA KEADAAN KAHAR)",
+        "GANTI (RUSAK)"
       ),
     },
 
@@ -58,6 +61,8 @@ const ModelArchive = db.define(
         "paspor biasa elektronik laminasi 5 tahun",
         "paspor biasa elektronik laminasi 10 tahun",
         "PASPOR BIASA 24 H",
+        "PASPOR BIASA 48 H",
+        "PASPOR ELEKTRONIK 48 H",
       ),
     },
 
